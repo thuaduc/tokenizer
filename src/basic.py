@@ -3,39 +3,41 @@ from .base import Base
 
 class BasicTokenizer:
     def __init__(self):
-        self.vocab = []
-        self.num_merge = 0
-        pass
+        self.vocab = {idx: bytes([idx]) for idx in range(256)}  # for decode
+        self.merges = {}  # for encode
 
     def train(self, text, vocab_size, verbose=False):
-        tokens = list(text.encode("utf-8"))
-        stats = Base.get_stats(tokens)
+        assert vocab_size >= 256
+        num_merges = vocab_size - 256
 
-        self.vocab = sorted(stats.items(), key=lambda item: item[1], reverse=True)
+        text_bytes = text.encode("utf-8")  # raw bytes
+        ids = list(text_bytes)  # list of integers in range 0..255
 
-        while self.num_merge < vocab_size - 256:
-            tokens = Base.merge(
-                tokens, self.vocab[self.num_merge][0], 256 + self.num_merge
-            )
-            self.num_merge += 1
+        for i in range(num_merges):
+            stats = Base.get_stats(ids)
+            sub = max(stats, key=stats.get)
+
+            idx = 256 + i
+            ids = Base.merge(ids, sub, idx)
+
+            self.merges[sub] = idx
+            self.vocab[idx] = self.vocab[sub[0]] + self.vocab[sub[1]]
 
     def encode(self, text):
-        tokens = list(text.encode("utf-8"))
-        for i in range(self.num_merge):
-            tokens = Base.merge(tokens, self.vocab[i][0], 256 + i)
+        ids = list(text.encode("utf-8"))
 
-        return tokens
+        while len(ids) >= 2:
+            stats = Base.get_stats(ids)
+            pair = min(stats, key=lambda p: self.merges.get(p, float("inf")))
+
+            if pair not in self.merges:
+                break  # nothing else can be merged anymore
+
+            idx = self.merges[pair]
+            ids = Base.merge(ids, pair, idx)
+        return ids
 
     def decode(self, ids):
-        newIds = []
-        for i in ids:
-            if i > 255:
-                newIds.append(self.vocab[i - 255 - 1][0][0])
-                newIds.append(self.vocab[i - 255 - 1][0][1])
+        bytes = b"".join(self.vocab[id] for id in ids)
 
-            else:
-                newIds.append(i)
-
-        print(newIds)
-
-        return bytes(list(newIds)).decode()
+        return bytes.decode("utf-8", errors="replace")
